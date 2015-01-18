@@ -4,7 +4,7 @@ This repo is a quick test made in Unity. It allow to use two webcams with the Oc
 
 ##Example
 
-[Oculus Rift Webcams](https://pbs.twimg.com/media/B457ojEIAAASKzu.jpg:large)
+![Oculus Rift Webcams](https://pbs.twimg.com/media/B457ojEIAAASKzu.jpg:large)
 
 ##How it works
 
