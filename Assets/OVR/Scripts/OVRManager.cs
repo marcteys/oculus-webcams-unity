@@ -19,13 +19,16 @@ limitations under the License.
 
 ************************************************************************************/
 
+#if !UNITY_5 || UNITY_5_0
+#error Oculus Utilities require Unity 5.1 or higher.
+#endif
+
 using System;
 using System.Collections;
-using System.Runtime.InteropServices;
 using System.Linq;
 using System.Text.RegularExpressions;
 using UnityEngine;
-using Ovr;
+using VR = UnityEngine.VR;
 
 /// <summary>
 /// Configuration data for Oculus virtual reality.
@@ -33,41 +36,9 @@ using Ovr;
 public class OVRManager : MonoBehaviour
 {
 	/// <summary>
-	/// Contains information about the user's preferences and body dimensions.
-	/// </summary>
-	public struct Profile
-	{
-		public float ipd;
-		public float eyeHeight;
-		public float eyeDepth;
-		public float neckHeight;
-	}
-
-	/// <summary>
 	/// Gets the singleton instance.
 	/// </summary>
 	public static OVRManager instance { get; private set; }
-		
-	/// <summary>
-	/// Gets a reference to the low-level C API Hmd Wrapper
-	/// </summary>
-	private static Hmd _capiHmd;
-	public static Hmd capiHmd
-	{
-		get {
-#if !UNITY_ANDROID || UNITY_EDITOR
-			if (_capiHmd == null)
-			{
-				IntPtr hmdPtr = IntPtr.Zero;
-				OVR_GetHMD(ref hmdPtr);
-				_capiHmd = (hmdPtr != IntPtr.Zero) ? new Hmd(hmdPtr) : null;
-			}
-#else
-			_capiHmd = null;
-#endif
-			return _capiHmd;
-		}
-	}
 		
 	/// <summary>
 	/// Gets a reference to the active OVRDisplay
@@ -78,46 +49,31 @@ public class OVRManager : MonoBehaviour
 	/// Gets a reference to the active OVRTracker
 	/// </summary>
 	public static OVRTracker tracker { get; private set; }
-	
+
+	/// <summary>
+	/// Gets a reference to the active OVRInput
+	/// </summary>
+	public static OVRInput input { get; private set; }
+
+	private static bool _profileIsCached = false;
+	private static OVRProfile _profile;
 	/// <summary>
 	/// Gets the current profile, which contains information about the user's settings and body dimensions.
 	/// </summary>
-	private static bool _profileIsCached = false;
-	private static Profile _profile;
-	public static Profile profile
+	public static OVRProfile profile
 	{
 		get {
 			if (!_profileIsCached)
 			{
-#if !UNITY_ANDROID || UNITY_EDITOR
-				float ipd = capiHmd.GetFloat(Hmd.OVR_KEY_IPD, Hmd.OVR_DEFAULT_IPD);
-				float eyeHeight = capiHmd.GetFloat(Hmd.OVR_KEY_EYE_HEIGHT, Hmd.OVR_DEFAULT_EYE_HEIGHT);
-				float[] defaultOffset = new float[] { Hmd.OVR_DEFAULT_NECK_TO_EYE_HORIZONTAL, Hmd.OVR_DEFAULT_NECK_TO_EYE_VERTICAL };
-				float[] neckToEyeOffset = capiHmd.GetFloatArray(Hmd.OVR_KEY_NECK_TO_EYE_DISTANCE, defaultOffset);
-				float neckHeight = eyeHeight - neckToEyeOffset[1];
+				_profile = new OVRProfile();
+				_profile.TriggerLoad();
 				
-				_profile = new Profile
-				{
-					ipd = ipd,
-					eyeHeight = eyeHeight,
-					eyeDepth = neckToEyeOffset[0],
-					neckHeight = neckHeight,
-				};
-#else
-				float ipd = 0.0f;
-				OVR_GetInterpupillaryDistance(ref ipd);
+				while (_profile.state == OVRProfile.State.LOADING)
+					System.Threading.Thread.Sleep(1);
 				
-				float eyeHeight = 0.0f;
-				OVR_GetPlayerEyeHeight(ref eyeHeight);
+				if (_profile.state != OVRProfile.State.READY)
+					Debug.LogWarning("Failed to load profile.");
 				
-				_profile = new Profile
-				{
-					ipd = ipd,
-					eyeHeight = eyeHeight,
-					eyeDepth = 0f, //TODO
-					neckHeight = 0.0f, // TODO
-				};
-#endif
 				_profileIsCached = true;
 			}
 
@@ -150,17 +106,53 @@ public class OVRManager : MonoBehaviour
 	/// </summary>
 	public static event Action HSWDismissed;
 	
+	private static bool _isHmdPresentCached = false;
+	private static bool _isHmdPresent = false;
+	/// <summary>
+	/// If true, a head-mounted display is connected and present.
+	/// </summary>
+	public static bool isHmdPresent
+	{
+		get {
+			if (!_isHmdPresentCached)
+			{
+				_isHmdPresentCached = true;
+				_isHmdPresent = OVRPlugin.hmdPresent;
+			}
+
+			return _isHmdPresent;
+		}
+
+		private set {
+			_isHmdPresentCached = true;
+			_isHmdPresent = value;
+		}
+	}
+
+	private static bool _isHSWDisplayedCached = false;
+	private static bool _isHSWDisplayed = false;
+	private static bool _wasHSWDisplayed;
 	/// <summary>
 	/// If true, then the Oculus health and safety warning (HSW) is currently visible.
 	/// </summary>
 	public static bool isHSWDisplayed
 	{
 		get {
-#if !UNITY_ANDROID || UNITY_EDITOR
-			return capiHmd.GetHSWDisplayState().Displayed;
-#else
-			return false;
-#endif
+			if (!isHmdPresent)
+				return false;
+
+			if (!_isHSWDisplayedCached)
+			{
+				_isHSWDisplayedCached = true;
+				_isHSWDisplayed = OVRPlugin.hswVisible;
+			}
+
+			return _isHSWDisplayed;
+		}
+
+		private set {
+			_isHSWDisplayedCached = true;
+			_isHSWDisplayed = value;
 		}
 	}
 	
@@ -169,10 +161,56 @@ public class OVRManager : MonoBehaviour
 	/// </summary>
 	public static void DismissHSWDisplay()
 	{
-#if !UNITY_ANDROID || UNITY_EDITOR
-		capiHmd.DismissHSWDisplay();
-#endif
+		if (!isHmdPresent)
+			return;
+
+		OVRPlugin.DismissHSW();
 	}
+
+	/// <summary>
+	/// If true, chromatic de-aberration will be applied, improving the image at the cost of texture bandwidth.
+	/// </summary>
+	public bool chromatic
+	{
+		get {
+			if (!isHmdPresent)
+				return false;
+
+			return OVRPlugin.chromatic;
+		}
+
+		set {
+			if (!isHmdPresent)
+				return;
+
+			OVRPlugin.chromatic = value;
+		}
+	}
+	
+	/// <summary>
+	/// If true, both eyes will see the same image, rendered from the center eye pose, saving performance.
+	/// </summary>
+	public bool monoscopic
+	{
+		get {
+			if (!isHmdPresent)
+				return true;
+
+			return OVRPlugin.monoscopic;
+		}
+		
+		set {
+			if (!isHmdPresent)
+				return;
+
+			OVRPlugin.monoscopic = value;
+		}
+	}
+
+	/// <summary>
+	/// If true, distortion rendering work is submitted a quarter-frame early to avoid pipeline stalls and increase CPU-GPU parallelism.
+	/// </summary>
+	public bool queueAhead = true;
 	
 	/// <summary>
 	/// Gets the current battery level.
@@ -182,11 +220,10 @@ public class OVRManager : MonoBehaviour
 	public static float batteryLevel
 	{
 		get {
-#if !UNITY_ANDROID || UNITY_EDITOR
-			return 1.0f;
-#else
-			return OVR_GetBatteryLevel();
-#endif
+			if (!isHmdPresent)
+				return 1f;
+
+			return OVRPlugin.batteryLevel;
 		}
 	}
 	
@@ -198,11 +235,10 @@ public class OVRManager : MonoBehaviour
 	public static float batteryTemperature
 	{
 		get {
-#if !UNITY_ANDROID || UNITY_EDITOR
-			return 0.0f;
-#else
-			return OVR_GetBatteryTemperature();
-#endif
+			if (!isHmdPresent)
+				return 0f;
+
+			return OVRPlugin.batteryTemperature;
 		}
 	}
 	
@@ -214,28 +250,26 @@ public class OVRManager : MonoBehaviour
 	public static int batteryStatus
 	{
 		get {
-#if !UNITY_ANDROID || UNITY_EDITOR
-			return 0;
-#else
-			return OVR_GetBatteryStatus();
-#endif
+			if (!isHmdPresent)
+				return -1;
+
+			return (int)OVRPlugin.batteryStatus;
 		}
 	}
 
 	/// <summary>
-	/// Controls the size of the eye textures.
-	/// Values must be above 0.
-	/// Values below 1 permit sub-sampling for improved performance.
-	/// Values above 1 permit super-sampling for improved sharpness.
+	/// Gets the current volume level.
 	/// </summary>
-	public float nativeTextureScale = 1.0f;
-	
-	/// <summary>
-	/// Controls the size of the rendering viewport.
-	/// Values must be between 0 and 1.
-	/// Values below 1 permit dynamic sub-sampling for improved performance.
-	/// </summary>
-	public float virtualTextureScale = 1.0f;
+	/// <returns><c>volume level in the range [0,1].</c>
+	public static float volumeLevel
+	{
+		get {
+			if (!isHmdPresent)
+				return 0f;
+
+			return OVRPlugin.systemVolume;
+		}
+	}
 
 	/// <summary>
 	/// If true, head tracking will affect the orientation of each OVRCameraRig's cameras.
@@ -243,70 +277,22 @@ public class OVRManager : MonoBehaviour
 	public bool usePositionTracking = true;
 
 	/// <summary>
-	/// The format of each eye texture.
-	/// </summary>
-	public RenderTextureFormat eyeTextureFormat = RenderTextureFormat.Default;
-
-	/// <summary>
-	/// The depth of each eye texture in bits.
-	/// </summary>
-	public int eyeTextureDepth = 24;
-
-	/// <summary>
-	/// If true, TimeWarp will be used to correct the output of each OVRCameraRig for rotational latency.
-	/// </summary>
-	public bool timeWarp = true;
-
-	/// <summary>
-	/// If this is true and TimeWarp is true, each OVRCameraRig will stop tracking and only TimeWarp will respond to head motion.
-	/// </summary>
-	public bool freezeTimeWarp = false;
-
-	/// <summary>
 	/// If true, each scene load will cause the head pose to reset.
 	/// </summary>
 	public bool resetTrackerOnLoad = true;
 
 	/// <summary>
-	/// If true, the eyes see the same image, which is rendered only by the left camera.
-	/// </summary>
-	public bool monoscopic = false;
-
-	/// <summary>
 	/// True if the current platform supports virtual reality.
 	/// </summary>
     public bool isSupportedPlatform { get; private set; }
-	
-	private static bool usingPositionTracking = false;
+
 	private static bool wasHmdPresent = false;
 	private static bool wasPositionTracked = false;
-	private static WaitForEndOfFrame waitForEndOfFrame = new WaitForEndOfFrame();
 
-#if UNITY_ANDROID && !UNITY_EDITOR
-	// Get this from Unity on startup so we can call Activity java functions
-	private static bool androidJavaInit = false;
-	private static AndroidJavaObject activity;
-	private static AndroidJavaClass javaVrActivityClass;
-	internal static int timeWarpViewNumber = 0;
-	public static event Action OnCustomPostRender;
-#else
-	private static bool ovrIsInitialized;
-	private static bool isQuitting;
-#endif
-
-    public static bool isPaused
-    {
-        get { return _isPaused; }
-        set
-        {
-#if UNITY_ANDROID && !UNITY_EDITOR
-			RenderEventType eventType = (value) ? RenderEventType.Pause : RenderEventType.Resume;
-			OVRPluginEvent.Issue(eventType);
-#endif
-            _isPaused = value;
-        }
-    }
-    private static bool _isPaused;
+	[NonSerialized]
+	private static OVRVolumeControl volumeController = null;
+	[NonSerialized]
+	private Transform volumeControllerTransform = null;
 
 #region Unity Messages
 
@@ -322,25 +308,22 @@ public class OVRManager : MonoBehaviour
 
 		instance = this;
 
-#if !UNITY_ANDROID || UNITY_EDITOR
-		if (!ovrIsInitialized)
-		{
-			OVR_Initialize();
-			OVRPluginEvent.Issue(RenderEventType.Initialize);
+		System.Version netVersion = OVRPlugin.wrapperVersion;
+		System.Version ovrVersion = OVRPlugin.version;
 
-			ovrIsInitialized = true;
-		}
+		Debug.Log("Unity v" + Application.unityVersion + ", " +
+		          "Oculus Utilities v" + netVersion + ", " +
+		          "OVRPlugin v" + ovrVersion + ".");
 
-		var netVersion = new System.Version(Ovr.Hmd.OVR_VERSION_STRING);
-		var ovrVersion = new System.Version(Ovr.Hmd.GetVersionString());
-		if (netVersion > ovrVersion)
-			Debug.LogWarning("Using an older version of LibOVR.");
+#if UNITY_EDITOR_WIN || UNITY_STANDALONE_WIN
+		if (SystemInfo.graphicsDeviceType != UnityEngine.Rendering.GraphicsDeviceType.Direct3D11)
+			Debug.LogWarning("VR rendering requires Direct3D11. Your graphics device: " + SystemInfo.graphicsDeviceType);
 #endif
 
         // Detect whether this platform is a supported platform
         RuntimePlatform currPlatform = Application.platform;
         isSupportedPlatform |= currPlatform == RuntimePlatform.Android;
-        isSupportedPlatform |= currPlatform == RuntimePlatform.LinuxPlayer;
+        //isSupportedPlatform |= currPlatform == RuntimePlatform.LinuxPlayer;
         isSupportedPlatform |= currPlatform == RuntimePlatform.OSXEditor;
         isSupportedPlatform |= currPlatform == RuntimePlatform.OSXPlayer;
         isSupportedPlatform |= currPlatform == RuntimePlatform.WindowsEditor;
@@ -352,163 +335,53 @@ public class OVRManager : MonoBehaviour
         }
 
 #if UNITY_ANDROID && !UNITY_EDITOR
-		Application.targetFrameRate = 60;
-		// don't allow the app to run in the background
-		Application.runInBackground = false;
-		// Disable screen dimming
-		Screen.sleepTimeout = SleepTimeout.NeverSleep;
-
-		if (!androidJavaInit)
-		{
-			AndroidJavaClass unityPlayer = new AndroidJavaClass("com.unity3d.player.UnityPlayer");
-			activity = unityPlayer.GetStatic<AndroidJavaObject>("currentActivity");
-			javaVrActivityClass = new AndroidJavaClass("com.oculusvr.vrlib.VrActivity");
-			// Prepare for the RenderThreadInit()
-			SetInitVariables(activity.GetRawObject(), javaVrActivityClass.GetRawClass());
-			
-			androidJavaInit = true;
-		}
-
 		// We want to set up our touchpad messaging system
 		OVRTouchpad.Create();
-		// This will trigger the init on the render thread
-		InitRenderThread();
-#else
-		SetEditorPlay(Application.isEditor);
+
+        // Turn off chromatic aberration by default to save texture bandwidth.
+        chromatic = false;
 #endif
+
+        InitVolumeController();
 
 		if (display == null)
 			display = new OVRDisplay();
 		if (tracker == null)
 			tracker = new OVRTracker();
+		if (input == null)
+			input = new OVRInput();
 
 		if (resetTrackerOnLoad)
 			display.RecenterPose();
-
-		// Except for D3D9, SDK rendering forces vsync unless you pass ovrHmdCap_NoVSync to Hmd.SetEnabledCaps().
-		if (timeWarp)
-		{
-			bool useUnityVSync = SystemInfo.graphicsDeviceVersion.Contains("Direct3D 9");
-			QualitySettings.vSyncCount = useUnityVSync ? 1 : 0;
-		}
-
-#if (UNITY_STANDALONE_WIN && (UNITY_4_6 || UNITY_4_5))
-		bool unity_4_6 = false;
-		bool unity_4_5_2 = false;
-		bool unity_4_5_3 = false;
-		bool unity_4_5_4 = false;
-		bool unity_4_5_5 = false;
-
-#if (UNITY_4_6)
-		unity_4_6 = true;
-#elif (UNITY_4_5_2)
-		unity_4_5_2 = true;
-#elif (UNITY_4_5_3)
-		unity_4_5_3 = true;
-#elif (UNITY_4_5_4)
-		unity_4_5_4 = true;
-#elif (UNITY_4_5_5)
-		unity_4_5_5 = true;
-#endif
-
-		// Detect correct Unity releases which contain the fix for D3D11 exclusive mode.
-		string version = Application.unityVersion;
-		int releaseNumber;
-		bool releaseNumberFound = Int32.TryParse(Regex.Match(version, @"\d+$").Value, out releaseNumber);
-
-		// Exclusive mode was broken for D3D9 in Unity 4.5.2p2 - 4.5.4 and 4.6 builds prior to beta 21
-		bool unsupportedExclusiveModeD3D9 = (unity_4_6 && version.Last(char.IsLetter) == 'b' && releaseNumberFound && releaseNumber < 21)
-			|| (unity_4_5_2 && version.Last(char.IsLetter) == 'p' && releaseNumberFound && releaseNumber >= 2)
-			|| (unity_4_5_3)
-			|| (unity_4_5_4);
-
-		// Exclusive mode was broken for D3D11 in Unity 4.5.2p2 - 4.5.5p2 and 4.6 builds prior to f1
-		bool unsupportedExclusiveModeD3D11 = (unity_4_6 && version.Last(char.IsLetter) == 'b')
-			|| (unity_4_5_2 && version.Last(char.IsLetter) == 'p' && releaseNumberFound && releaseNumber >= 2)
-			|| (unity_4_5_3)
-			|| (unity_4_5_4)
-			|| (unity_4_5_5 && version.Last(char.IsLetter) == 'f')
-			|| (unity_4_5_5 && version.Last(char.IsLetter) == 'p' && releaseNumberFound && releaseNumber < 3);
-
-		if (unsupportedExclusiveModeD3D9 && !display.isDirectMode && SystemInfo.graphicsDeviceVersion.Contains("Direct3D 9"))
-		{
-			MessageBox(0, "Direct3D 9 extended mode is not supported in this configuration. "
-				+ "Please use direct display mode, a different graphics API, or rebuild the application with a newer Unity version."
-				, "VR Configuration Warning", 0);
-		}
-
-		if (unsupportedExclusiveModeD3D11 && !display.isDirectMode && SystemInfo.graphicsDeviceVersion.Contains("Direct3D 11"))
-		{
-			MessageBox(0, "Direct3D 11 extended mode is not supported in this configuration. "
-				+ "Please use direct display mode, a different graphics API, or rebuild the application with a newer Unity version."
-				, "VR Configuration Warning", 0);
-		}
-#endif
 	}
 
-#if !UNITY_ANDROID || UNITY_EDITOR
-	private void OnApplicationQuit()
+	private void OnEnable()
 	{
-		isQuitting = true;
-	}
-
-	private void OnDisable()
-	{
-		if (!isQuitting)
-			return;
-
-		if (ovrIsInitialized)
+		if (volumeController != null)
 		{
-			OVR_Destroy();
-			OVRPluginEvent.Issue(RenderEventType.Destroy);
-			_capiHmd = null;
-
-			ovrIsInitialized = false;
+			volumeController.UpdatePosition(volumeControllerTransform);
 		}
-	}
-#endif
-
-	private void Start()
-	{
-#if !UNITY_ANDROID || UNITY_EDITOR
-		Camera cam = GetComponent<Camera>();
-		if (cam == null)
-		{
-			// Ensure there is a non-RT camera in the scene to force rendering of the left and right eyes.
-			cam = gameObject.AddComponent<Camera>();
-			cam.cullingMask = 0;
-            cam.clearFlags = CameraClearFlags.SolidColor;
-            cam.backgroundColor = new Color(0.0f, 0.0f, 0.0f);
-			cam.renderingPath = RenderingPath.Forward;
-			cam.orthographic = true;
-			cam.useOcclusionCulling = false;
-		}
-#endif
-
-		bool isD3d = SystemInfo.graphicsDeviceVersion.Contains("Direct3D") ||
-			Application.platform == RuntimePlatform.WindowsEditor &&
-				SystemInfo.graphicsDeviceVersion.Contains("emulated");
-		display.flipInput = isD3d;
-
-		StartCoroutine(CallbackCoroutine());
-	}
+    }
 
 	private void Update()
 	{
-		if (usePositionTracking != usingPositionTracking)
-		{
-			tracker.isEnabled = usePositionTracking;
-			usingPositionTracking = usePositionTracking;
-		}
+		tracker.isEnabled = usePositionTracking;
 
 		// Dispatch any events.
-		if (HMDLost != null && wasHmdPresent && !display.isPresent)
+		isHmdPresent = OVRPlugin.hmdPresent;
+
+		if (isHmdPresent)
+		{
+			OVRPlugin.queueAheadFraction = (queueAhead) ? 0.25f : 0f;
+		}
+
+		if (HMDLost != null && wasHmdPresent && !isHmdPresent)
 			HMDLost();
 
-		if (HMDAcquired != null && !wasHmdPresent && display.isPresent)
+        if (HMDAcquired != null && !wasHmdPresent && isHmdPresent)
 			HMDAcquired();
 
-		wasHmdPresent = display.isPresent;
+        wasHmdPresent = isHmdPresent;
 
 		if (TrackingLost != null && wasPositionTracked && !tracker.isPositionTracked)
 			TrackingLost();
@@ -517,76 +390,55 @@ public class OVRManager : MonoBehaviour
 			TrackingAcquired();
 
 		wasPositionTracked = tracker.isPositionTracked;
-		
+
+		isHSWDisplayed = OVRPlugin.hswVisible;
+
 		if (isHSWDisplayed && Input.anyKeyDown)
-		{
 			DismissHSWDisplay();
-			
+		
+		if (!isHSWDisplayed && _wasHSWDisplayed)
+		{
 			if (HSWDismissed != null)
 				HSWDismissed();
-		}		
+		}
 		
-		display.timeWarp = timeWarp;
+		_wasHSWDisplayed = isHSWDisplayed;
 
-#if (!UNITY_ANDROID || UNITY_EDITOR)
 		display.Update();
-#endif
-	}
-
-#if (UNITY_EDITOR_OSX)
-	private void OnPreCull() // TODO: Fix Mac Unity Editor memory corruption issue requiring OnPreCull workaround.
-#else
-	private void LateUpdate()
-#endif
-	{
-#if (!UNITY_ANDROID || UNITY_EDITOR)
-		display.BeginFrame();
-#endif
-	}
-
-	private IEnumerator CallbackCoroutine()
-	{
-        while (true)
-        {
-			yield return waitForEndOfFrame;
-
-#if UNITY_ANDROID && !UNITY_EDITOR
-			OVRManager.DoTimeWarp(timeWarpViewNumber);
-#else
-			display.EndFrame();
-#endif
-        }
-	}
-	
-#if UNITY_ANDROID && !UNITY_EDITOR
-	private void OnPause()
-	{
-		isPaused = true;
-	}
-	
-	private void OnApplicationPause(bool pause)
-	{
-		Debug.Log("OnApplicationPause() " + pause);
-		if (pause)
+		input.Update();
+		
+		if (volumeController != null)
 		{
-			OnPause();
+			if (volumeControllerTransform == null)
+			{
+				if (gameObject.GetComponent<OVRCameraRig>() != null)
+				{
+					volumeControllerTransform = gameObject.GetComponent<OVRCameraRig>().centerEyeAnchor;
+				}
+			}
+			volumeController.UpdatePosition(volumeControllerTransform);
 		}
-		else
+    }
+
+	/// <summary>
+	/// Creates a popup dialog that shows when volume changes.
+	/// </summary>
+	private static void InitVolumeController()
+	{
+		if (volumeController == null)
 		{
-			StartCoroutine(OnResume());
+			Debug.Log("Creating volume controller...");
+			// Create the volume control popup
+			GameObject go = GameObject.Instantiate(Resources.Load("OVRVolumeController")) as GameObject;
+			if (go != null)
+			{
+				volumeController = go.GetComponent<OVRVolumeControl>();
+			}
+			else
+			{
+				Debug.LogError("Unable to instantiate volume controller");
+			}
 		}
-	}
-	
-	void OnDisable()
-	{
-		StopAllCoroutines();
-	}
-
-	private IEnumerator OnResume()
-	{
-		yield return null; // delay 1 frame to allow Unity enough time to create the windowSurface
-
-		isPaused = false;
 	}
 
 	/// <summary>
@@ -597,115 +449,22 @@ public class OVRManager : MonoBehaviour
 		// show the platform UI quit prompt
 		OVRManager.PlatformUIConfirmQuit();
 	}
-	
-	private void OnPostRender()
-	{
-		// Allow custom code to render before we kick off the plugin
-		if (OnCustomPostRender != null)
-		{
-			OnCustomPostRender();
-		}
-		
-		EndEye(OVREye.Left, display.GetEyeTextureId(OVREye.Left));
-		EndEye(OVREye.Right, display.GetEyeTextureId(OVREye.Right));
-	}
-#endif
+
 #endregion
 
-    public static void SetEditorPlay(bool isEditor)
-    {
-#if !UNITY_ANDROID || UNITY_EDITOR
-        OVR_SetEditorPlay(isEditor);
-#endif
-    }
-
-    public static void SetDistortionCaps(uint distortionCaps)
-    {
-#if !UNITY_ANDROID || UNITY_EDITOR
-        OVR_SetDistortionCaps(distortionCaps);
-#endif
-    }
-
-    public static void SetInitVariables(IntPtr activity, IntPtr vrActivityClass)
-    {
-#if UNITY_ANDROID && !UNITY_EDITOR
-		OVR_SetInitVariables(activity, vrActivityClass);
-#endif
-    }
-
     public static void PlatformUIConfirmQuit()
-    {
-#if UNITY_ANDROID && !UNITY_EDITOR
-		OVRPluginEvent.Issue(RenderEventType.PlatformUIConfirmQuit);
-#endif
+	{
+		if (!isHmdPresent)
+			return;
+
+		OVRPlugin.ShowUI(OVRPlugin.PlatformUI.ConfirmQuit);
     }
 
     public static void PlatformUIGlobalMenu()
-    {
-#if UNITY_ANDROID && !UNITY_EDITOR
-		OVRPluginEvent.Issue(RenderEventType.PlatformUI);
-#endif
+	{
+		if (!isHmdPresent)
+			return;
+
+		OVRPlugin.ShowUI(OVRPlugin.PlatformUI.GlobalMenu);
     }
-
-    public static void DoTimeWarp(int timeWarpViewNumber)
-    {
-#if UNITY_ANDROID && !UNITY_EDITOR
-		OVRPluginEvent.IssueWithData(RenderEventType.TimeWarp, timeWarpViewNumber);
-#endif
-    }
-
-    public static void EndEye(OVREye eye, int eyeTextureId)
-    {
-#if UNITY_ANDROID && !UNITY_EDITOR
-		RenderEventType eventType = (eye == OVREye.Left) ?
-			RenderEventType.LeftEyeEndFrame :
-			RenderEventType.RightEyeEndFrame;
-
-		OVRPluginEvent.IssueWithData(eventType, eyeTextureId);
-#endif
-    }
-
-    public static void InitRenderThread()
-    {
-#if UNITY_ANDROID && !UNITY_EDITOR
-		OVRPluginEvent.Issue(RenderEventType.InitRenderThread);
-#endif
-    }
-
-    private const string LibOVR = "OculusPlugin";
-
-#if !UNITY_ANDROID || UNITY_EDITOR
-	[DllImport(LibOVR, CallingConvention = CallingConvention.Cdecl)]
-	private static extern void OVR_GetHMD(ref IntPtr hmdPtr);
-    [DllImport(LibOVR, CallingConvention = CallingConvention.Cdecl)]
-    private static extern void OVR_SetEditorPlay(bool isEditorPlay);
-    [DllImport(LibOVR, CallingConvention = CallingConvention.Cdecl)]
-    private static extern void OVR_SetDistortionCaps(uint distortionCaps);
-	[DllImport(LibOVR, CallingConvention = CallingConvention.Cdecl)]
-	private static extern void OVR_Initialize();
-	[DllImport(LibOVR, CallingConvention = CallingConvention.Cdecl)]
-	private static extern void OVR_Destroy();
-
-#if UNITY_STANDALONE_WIN
-	[DllImport("user32", EntryPoint = "MessageBoxA", CharSet = CharSet.Ansi)]
-	public static extern bool MessageBox(int hWnd,
-	                                     [MarshalAs(UnmanagedType.LPStr)]string text,
-	                                     [MarshalAs(UnmanagedType.LPStr)]string caption, uint type);
-#endif
-
-#else
-	[DllImport(LibOVR)]
-	private static extern void OVR_SetInitVariables(IntPtr activity, IntPtr vrActivityClass);
-	[DllImport(LibOVR)]
-	private static extern float OVR_GetBatteryLevel();
-	[DllImport(LibOVR)]
-	private static extern int OVR_GetBatteryStatus();
-	[DllImport(LibOVR)]
-	private static extern float OVR_GetBatteryTemperature();
-
-	[DllImport(LibOVR)]
-	private static extern bool OVR_GetPlayerEyeHeight(ref float eyeHeight);
-	[DllImport(LibOVR)]
-	private static extern bool OVR_GetInterpupillaryDistance(ref float interpupillaryDistance);
-#endif
 }

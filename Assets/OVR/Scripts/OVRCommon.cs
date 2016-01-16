@@ -21,7 +21,6 @@ limitations under the License.
 
 using UnityEngine;
 using System.Collections.Generic;
-using Ovr;
 
 /// <summary>
 /// Miscellaneous extension methods that any script can use.
@@ -29,109 +28,81 @@ using Ovr;
 public static class OVRExtensions
 {
 	/// <summary>
-	/// Converts a plain C# matrix to a Unity matrix.
+	/// Converts the given world-space transform to an OVRPose in tracking space.
 	/// </summary>
-	/// <returns>The matrix as a Unity Matrix4x4.</returns>
-	/// <param name="ovrMat">The matrix as a Matrix4f.</param>
-	public static Matrix4x4 ToMatrix4x4(this Matrix4f ovrMat)
+	public static OVRPose ToTrackingSpacePose(this Transform transform)
 	{
-        Matrix4x4 mat = new Matrix4x4();
+		OVRPose headPose;
+		headPose.position = UnityEngine.VR.InputTracking.GetLocalPosition(UnityEngine.VR.VRNode.Head);
+		headPose.orientation = UnityEngine.VR.InputTracking.GetLocalRotation(UnityEngine.VR.VRNode.Head);
 
-		mat[0, 0] = ovrMat.m[0, 0];
-		mat[0, 1] = ovrMat.m[0, 1];
-		mat[0, 2] = ovrMat.m[0, 2];
-		mat[0, 3] = ovrMat.m[0, 3];
-		mat[1, 0] = ovrMat.m[1, 0];
-		mat[1, 1] = ovrMat.m[1, 1];
-		mat[1, 2] = ovrMat.m[1, 2];
-		mat[1, 3] = ovrMat.m[1, 3];
-		mat[2, 0] = ovrMat.m[2, 0];
-		mat[2, 1] = ovrMat.m[2, 1];
-		mat[2, 2] = ovrMat.m[2, 2];
-		mat[2, 3] = ovrMat.m[2, 3];
-		mat[3, 0] = ovrMat.m[3, 0];
-		mat[3, 1] = ovrMat.m[3, 1];
-		mat[3, 2] = ovrMat.m[3, 2];
-		mat[3, 3] = ovrMat.m[3, 3];
+		var ret = headPose * transform.ToHeadSpacePose();
 
-		return mat;
+		return ret;
 	}
 
 	/// <summary>
-	/// Converts a plain C# Sizei to a Unity Vector2.
+	/// Converts the given world-space transform to an OVRPose in head space.
 	/// </summary>
-	/// <returns>The size as a Unity Vector2.</returns>
-	/// <param name="size">The size as a C# Sizei.</param>
-	public static Vector2 ToVector2(this Sizei size)
+	public static OVRPose ToHeadSpacePose(this Transform transform)
 	{
-		return new Vector2(size.w, size.h);
+		return Camera.current.transform.ToOVRPose().Inverse() * transform.ToOVRPose();
 	}
 
-	/// <summary>
-	/// Converts a plain C# Vector2i to a Unity Vector2.
-	/// </summary>
-	/// <returns>The vector as a Unity Vector2.</returns>
-	/// <param name="size">The vector as a C# Vector2i.</param>
-	public static Vector2 ToVector2(this Vector2i vec)
+	internal static OVRPose ToOVRPose(this Transform t, bool isLocal = false)
 	{
-		return new Vector2(vec.x, vec.y);
-	}
-
-	/// <summary>
-	/// Converts a plain C# Vector2 to a Unity Vector2.
-	/// </summary>
-	/// <returns>The vector as a Unity Vector2.</returns>
-	/// <param name="size">The vector as a C# Vector2.</param>
-	public static Vector2 ToVector2(this Vector2f vec)
-	{
-		return new Vector2(vec.x, vec.y);
-	}
-
-	/// <summary>
-	/// Converts a plain C# Vector3 to a Unity Vector3.
-	/// </summary>
-	/// <returns>The vector as a Unity Vector3.</returns>
-	/// <param name="size">The vector as a C# Vector3.</param>
-	public static Vector3 ToVector3(this Vector3f vec, bool rhToLh = true)
-	{
-		Vector3 v = new Vector3(vec.x, vec.y, vec.z);
-
-		if (rhToLh)
-			v.z = -v.z;
-
-		return v;
+		OVRPose pose;
+		pose.orientation = (isLocal) ? t.localRotation : t.rotation;
+		pose.position = (isLocal) ? t.localPosition : t.position;
+		return pose;
 	}
 	
-	/// <summary>
-	/// Converts a plain C# Quatf to a Unity Quaternion.
-	/// </summary>
-	/// <returns>The quaternion as a Unity Quaternion.</returns>
-	/// <param name="size">The quaternion as a C# Quatf.</param>
-	public static Quaternion ToQuaternion(this Quatf quat, bool rhToLh = true)
+	internal static void FromOVRPose(this Transform t, OVRPose pose, bool isLocal = false)
 	{
-		Quaternion q = new Quaternion(quat.x, quat.y, quat.z, quat.w);
-
-		if (rhToLh)
+		if (isLocal)
 		{
-			q.x = -q.x;
-			q.y = -q.y;
+			t.localRotation = pose.orientation;
+			t.localPosition = pose.position;
 		}
-
-		return q;
+		else
+		{
+			t.rotation = pose.orientation;
+			t.position = pose.position;
+		}
 	}
 
-	/// <summary>
-	/// Converts a plain C# Posef to a Unity OVRPose.
-	/// </summary>
-	/// <returns>The pose as a Unity OVRPose.</returns>
-	/// <param name="size">The pose as a C# Posef.</param>
-	public static OVRPose ToPose(this Posef pose, bool rhToLh = true)
+	internal static OVRPose ToOVRPose(this OVRPlugin.Posef p)
 	{
-		return new OVRPose
+		return new OVRPose()
 		{
-			position = pose.Position.ToVector3(rhToLh),
-			orientation = pose.Orientation.ToQuaternion(rhToLh)
+			position = new Vector3(p.Position.x, p.Position.y, -p.Position.z),
+			orientation = new Quaternion(-p.Orientation.x, -p.Orientation.y, p.Orientation.z, p.Orientation.w)
 		};
+	}
+	
+	internal static OVRTracker.Frustum ToFrustum(this OVRPlugin.Frustumf f)
+	{
+		return new OVRTracker.Frustum()
+		{
+			nearZ = f.zNear,
+			farZ = f.zFar,
+			
+			fov = new Vector2()
+			{
+				x = Mathf.Rad2Deg * f.fovX,
+				y = Mathf.Rad2Deg * f.fovY
+			}
+		};
+	}
+
+	internal static OVRPlugin.Vector3f ToVector3f(this Vector3 v)
+	{
+		return new OVRPlugin.Vector3f() { x = v.x, y = v.y, z = v.z };
+	}
+
+	internal static OVRPlugin.Quatf ToQuatf(this Quaternion q)
+	{
+		return new OVRPlugin.Quatf() { x = q.x, y = q.y, z = q.z, w = q.w };
 	}
 }
 
@@ -141,6 +112,20 @@ public static class OVRExtensions
 public struct OVRPose
 {
 	/// <summary>
+	/// A pose with no translation or rotation.
+	/// </summary>
+	public static OVRPose identity
+	{
+		get {
+			return new OVRPose()
+			{
+				position = Vector3.zero,
+				orientation = Quaternion.identity
+			};
+		}
+	}
+
+	/// <summary>
 	/// The position.
 	/// </summary>
 	public Vector3 position;
@@ -149,15 +134,45 @@ public struct OVRPose
 	/// The orientation.
 	/// </summary>
 	public Quaternion orientation;
-}
 
-/// <summary>
-/// Selects a human eye.
-/// </summary>
-public enum OVREye
-{
-	Center = -1,
-	Left  = Ovr.Eye.Left,
-	Right = Ovr.Eye.Right,
-	Count = Ovr.Eye.Count,
+	/// <summary>
+	/// Multiplies two poses.
+	/// </summary>
+	public static OVRPose operator*(OVRPose lhs, OVRPose rhs)
+	{
+		var ret = new OVRPose();
+		ret.position = lhs.position + lhs.orientation * rhs.position;
+		ret.orientation = lhs.orientation * rhs.orientation;
+		return ret;
+	}
+
+	/// <summary>
+	/// Computes the inverse of the given pose.
+	/// </summary>
+	public OVRPose Inverse()
+	{
+		OVRPose ret;
+		ret.orientation = Quaternion.Inverse(orientation);
+		ret.position = ret.orientation * -position;
+		return ret;
+	}
+
+	/// <summary>
+	/// Converts the pose from left- to right-handed or vice-versa.
+	/// </summary>
+	internal OVRPose flipZ()
+	{
+		var ret = this;
+		ret.position.z = -ret.position.z;
+		return ret;
+	}
+
+	internal OVRPlugin.Posef ToPosef()
+	{
+		return new OVRPlugin.Posef()
+		{
+			Position = position.ToVector3f(),
+			Orientation = orientation.ToQuatf()
+		};
+	}
 }
