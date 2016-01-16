@@ -22,7 +22,7 @@ public class WebcamTexture : MonoBehaviour {
 		{
 			webcamTexture.deviceName = devices[webcamNumber].name;
 			webcamTexture.Play();
-			this.renderer.material.mainTexture = webcamTexture;
+			this.GetComponent<Renderer>().material.mainTexture = webcamTexture;
 		}
 
         if (rotatePlane) this.transform.Rotate(Vector3.forward, 180);
@@ -31,7 +31,7 @@ public class WebcamTexture : MonoBehaviour {
 
 	void FitScreen()
     {
-		Camera cam = this.transform.parent.camera;
+		Camera cam = this.transform.parent.GetComponent<Camera>();
 		
 		float height = cam.orthographicSize * 2.0f;
 		float width = height * Screen.width / Screen.height;

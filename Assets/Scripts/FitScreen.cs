@@ -10,7 +10,7 @@ public class FitScreen : MonoBehaviour {
 
 	void Start () {
 		Camera cam = Camera.main;
-		if(useParentcam) cam = this.transform.parent.camera;
+		if(useParentcam) cam = this.transform.parent.GetComponent<Camera>();
 		
 		float height = cam.orthographicSize * 2.0f;
 		float width = height * Screen.width / Screen.height;

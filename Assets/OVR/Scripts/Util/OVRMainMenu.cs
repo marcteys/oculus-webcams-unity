@@ -329,7 +329,7 @@ public class OVRMainMenu : MonoBehaviour
 			Cursor.visible = false; 
 			Cursor.lockState = CursorLockMode.Locked;
 #else
-			Screen.showCursor = false; 
+			Cursor.visible = false; 
 			Screen.lockCursor = true;
 #endif
 		}
